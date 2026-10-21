@@ -187,11 +187,15 @@ export function repairJsonString(rawText: string): string {
 
   const extracted = cleanMarkdownAndExtractJson(rawText);
 
-  // Thử parse trực tiếp nếu đã hợp lệ
-  try {
-    JSON.parse(extracted);
-    return extracted;
-  } catch {}
+  const hasUnescapedLatex = /(?<!\\)\\(frac|dfrac|text|mathrm|mathbf|mathit|tan|sin|cos|cot|sqrt|vec|widehat|alpha|beta|gamma|delta|ne|neq|notin|begin|end|right|rightarrow|times|theta|triangle)\b/.test(extracted);
+
+  // Thử parse trực tiếp nếu đã hợp lệ và không chứa lệnh LaTeX với single backslash
+  if (!hasUnescapedLatex) {
+    try {
+      JSON.parse(extracted);
+      return extracted;
+    } catch {}
+  }
 
   const sanitized = preprocessRawJson(rawText);
   try {
@@ -388,10 +392,16 @@ export function safeJsonParse<T = any>(rawText: string): T {
 
   const cleaned = cleanMarkdownAndExtractJson(rawText);
 
-  // Pass 1: Parse trực tiếp nếu chuỗi đã là JSON chuẩn
-  try {
-    return JSON.parse(cleaned);
-  } catch {}
+  // Kiểm tra xem chuỗi có chứa các lệnh LaTeX dùng dấu gạch chéo ngược đơn (\frac, \text, \tan, \ne, \right...)
+  // Nếu có, KHÔNG parse trực tiếp vì JSON.parse sẽ biến \frac thành FormFeed, \text thành Tab, \ne thành Newline
+  const hasUnescapedLatex = /(?<!\\)\\(frac|dfrac|text|mathrm|mathbf|mathit|tan|sin|cos|cot|sqrt|vec|widehat|alpha|beta|gamma|delta|ne|neq|notin|begin|end|right|rightarrow|times|theta|triangle)\b/.test(cleaned);
+
+  // Pass 1: Parse trực tiếp nếu chuỗi đã là JSON chuẩn và không chứa lệnh LaTeX với single backslash
+  if (!hasUnescapedLatex) {
+    try {
+      return JSON.parse(cleaned);
+    } catch {}
+  }
 
   // Pass 2: Khử các ký tự điều khiển, sửa lỗi SVG quotes, escape unescaped inner quotes và xử lý LaTeX backslashes
   const sanitized = preprocessRawJson(cleaned);

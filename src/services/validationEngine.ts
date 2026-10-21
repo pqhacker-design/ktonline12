@@ -45,22 +45,43 @@ export function cleanQuestionText(text: string): string {
   str = str.replace(/([A-Z])\s+'\s*([A-Z])/g, "$1'$2");
   str = str.replace(/([A-Z])\s+'/g, "$1'");
 
-  // 4. Làm sạch \text{ cm} hoặc \text{cm} ở văn bản thường
-  str = str.replace(/(\d+)\s*\\text\{\s*cm\s*\}/g, '$1 cm');
+  // 4. Làm sạch \text{ cm}, extcm, \text{ kg}, extkg ở văn bản thường
+  str = str.replace(/(\d+)\s*(?:\\text\{\s*cm\s*\}|extcm\b)/g, '$1 cm');
   str = str.replace(/\\text\{\s*cm\s*\}/g, 'cm');
+  str = str.replace(/(\d+)\s*(?:\\text\{\s*kg\s*\}|extkg\b)/g, '$1 kg');
+  str = str.replace(/\\text\{\s*kg\s*\}/g, 'kg');
+  str = str.replace(/(\d+)\s*(?:\\text\{\s*m\s*\}|extm\b)/g, '$1 m');
+  str = str.replace(/\\text\{\s*m\s*\}/g, 'm');
 
   // 5. Tách từ tiếng Việt dính vào biến số toán học (sử dụng a-z chuẩn)
   str = str.replace(/([a-zàáảãạâầấẩẫậăằắẳẵặèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ])([A-Z]{1,4}\b)/g, '$1 $2');
   str = str.replace(/([a-zàáảãạâầấẩẫậăằắẳẵặèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ])(\d+)/g, '$1 $2');
   str = str.replace(/(\d+)\s*cm([a-zàáảãạâầấẩẫậăằắẳẵặèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ])/g, '$1 cm $2');
 
-  // 6. Chuẩn hóa góc 60\circ, 50\circ -> 50^\circ
-  str = str.replace(/(\d+)\s*\\\^?\{?circ\}?/g, '$1^\\circ');
+  // 6a. Chuẩn hóa nhiệt độ độ C: -1{,}8\circC, 25^\circC, 25 ^\circ C, 25° C -> 25°C
+  str = str.replace(/(-?\d+(?:(?:[.,]|\{,\})\d+)?)\s*(?:\\?\^?\{?\\?circ\}?\s*(?:\\text\{C\}|\\mathrm\{C\}|C\b)|\^\s*°\s*C\b|°\s*C\b)/g, (m, num) => {
+    const cleanNum = num.replace(/\{,\}/g, ',');
+    return `${cleanNum}°C`;
+  });
 
-  // 7. Chuyển đổi các dấu xuống dòng kiểu LaTeX '\\' còn sót thành ngắt dòng thực sự '\n'
-  str = str.replace(/\\+([0-9]+[.)])/g, '\n$1');
-  str = str.replace(/\\+([a-zA-Z][.)])/g, '\n$1');
-  str = str.replace(/\\\\+/g, '\n');
+  // 6b. Chuẩn hóa góc độ: 60\circ, 50\circ -> 50°
+  str = str.replace(/([0-9]+(?:[.,{}]\d+)?)\s*(?:\\\^?\{?circ\}?|\^\s*°|°)(?!\s*[a-zA-Z])/g, (m, num) => {
+    const cleanNum = num.replace(/\{,\}/g, ',');
+    return `${cleanNum}°`;
+  });
+
+  // 7. Chuyển đổi các dấu xuống dòng kiểu LaTeX '\\' còn sót NGOÀI khối công thức toán thành ngắt dòng thực sự '\n'
+  const mathBlockRegex = /(\$\$[\s\S]*?\$\$|\$[^\$]+?\$|\\begin\{(?:cases|aligned|array|matrix|pmatrix|bmatrix)\}[\s\S]*?\\end\{(?:cases|aligned|array|matrix|pmatrix|bmatrix)\})/g;
+  const parts = str.split(mathBlockRegex);
+  for (let i = 0; i < parts.length; i += 2) {
+    if (!parts[i]) continue;
+    let p = parts[i];
+    p = p.replace(/\\+([0-9]+[.)])/g, '\n$1');
+    p = p.replace(/\\+([a-zA-Z][.)])/g, '\n$1');
+    p = p.replace(/\\\\+/g, '\n');
+    parts[i] = p;
+  }
+  str = parts.join('');
 
   return str.trim();
 }

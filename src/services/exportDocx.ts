@@ -26,8 +26,7 @@ import {
   XmlComponent,
 } from 'docx';
 import { ExamMetadata, ExamPackage, MatrixRow, Question, getCognitiveTag, getSpecRowQuestionDetails } from '../types';
-import { DiagramEngine } from './diagramEngine';
-import { normalizeNewlines } from '../utils/textUtils';
+import { normalizeNewlines, repairLatexCorruptions } from '../utils/textUtils';
 
 /**
  * Sinh khối tiêu đề bài thi / đáp án chuẩn bộ mẫu hành chính cho Word (.docx)
@@ -258,7 +257,7 @@ class MathCases extends XmlComponent {
  */
 export function cleanLatexForDocx(latex: string): string {
   if (!latex) return '';
-  let str = latex;
+  let str = repairLatexCorruptions(latex);
   str = str.replace(/\\%/g, '%');
   str = str.replace(/\\begin\{cases\}/g, '{ ');
   str = str.replace(/\\end\{cases\}/g, ' }');
@@ -278,12 +277,27 @@ export function cleanLatexForDocx(latex: string): string {
   str = str.replace(/\\left\s*/g, '').replace(/\\right\s*/g, '');
   str = str.replace(/\\alpha/g, 'α').replace(/\\beta/g, 'β').replace(/\\gamma/g, 'γ').replace(/\\Delta/g, 'Δ').replace(/\\pi/g, 'π');
   str = str.replace(/\\sim\b/g, '∼').replace(/\\perp\b/g, '⊥').replace(/\\parallel\b/g, '∥').replace(/\\angle\b/g, '∠');
-  str = str.replace(/\\le(q)?\b/g, '≤').replace(/\\ge(q)?\b/g, '≥').replace(/\\neq\b/g, '≠').replace(/\\approx\b/g, '≈').replace(/\\infty\b/g, '∞');
+  str = str.replace(/\\le(q)?\b/g, '≤').replace(/\\ge(q)?\b/g, '≥').replace(/\\ne(q)?\b/g, '≠').replace(/\\approx\b/g, '≈').replace(/\\infty\b/g, '∞');
   str = str.replace(/\\in\b/g, '∈').replace(/\\notin\b/g, '∉').replace(/\\times\b/g, '×').replace(/\\cdot\b/g, '·');
   str = str.replace(/\\vdots\b/g, '⋮').replace(/\\cdots\b/g, '⋯').replace(/\\ldots\b/g, '…').replace(/\\dots\b/g, '…').replace(/\\ddots\b/g, '⋱');
   str = str.replace(/\\mid\b/g, '|').replace(/\\nmid\b/g, '∤').replace(/\\div\b/g, '÷');
   str = str.replace(/\\triangle\b/g, '△').replace(/\\cong\b/g, '≅').replace(/\\equiv\b/g, '≡');
-  str = str.replace(/\\(Leftrightarrow|Rightarrow|rightarrow|to)/g, '⇔');
+  str = str.replace(/\\Leftrightarrow\b/g, '⇔');
+  str = str.replace(/\\Rightarrow\b/g, '⇒');
+  str = str.replace(/\\Leftarrow\b/g, '⇐');
+  str = str.replace(/\\(rightarrow|to)\b/g, '→');
+  str = str.replace(/\\(leftarrow|gets)\b/g, '←');
+  str = str.replace(/\\rightleftharpoons\b/g, '⇌');
+  str = str.replace(/\\?\^?\{?\\?circ\}?\s*(?:\\text\{C\}|\\mathrm\{C\}|C\b)/g, '°C');
+  str = str.replace(/\^\{\s*°\s*C\s*\}/g, '°C');
+  str = str.replace(/\^\s*°\s*C\b/g, '°C');
+  str = str.replace(/°\s*C\b/g, '°C');
+  str = str.replace(/\\degree\b/g, '°');
+  str = str.replace(/\^\{\s*\\circ\s*\}/g, '°');
+  str = str.replace(/\^\\circ\b/g, '°');
+  str = str.replace(/\\circ\b/g, '°');
+  str = str.replace(/\^\{\s*°\s*\}/g, '°');
+  str = str.replace(/\^\s*°/g, '°');
   str = str.replace(/\\forall/g, '∀').replace(/\\exists/g, '∃');
   str = str.replace(/\\([a-zA-Z]+)/g, '$1');
   return str;
@@ -349,7 +363,7 @@ export function parseMathChildren(
   | MathCurlyBrackets
   | MathSquareBrackets
 )[] {
-  let str = latex.trim();
+  let str = repairLatexCorruptions(latex.trim());
   const elements: any[] = [];
 
   // 1. Tiền xử lý & làm sạch các lệnh LaTeX cấu trúc
@@ -376,18 +390,58 @@ export function parseMathChildren(
     str = str.replace(/\\(text|mathrm|mathbf|mathit)\{([^{}]+)\}/g, '$2');
   }
   str = str.replace(/\\(wide(hat|tilde)|hat|tilde)\{([^{}]+)\}/g, '$3̂');
+  str = str.replace(/\\(wide(hat|tilde)|hat|tilde)\s+([A-Za-z0-9]+)/g, '$3̂');
   str = str.replace(/\\(overrightarrow|vec)\{([^{}]+)\}/g, '$2⃗');
+  str = str.replace(/\\(overrightarrow|vec)\s+([A-Za-z0-9]+)/g, '$2⃗');
   str = str.replace(/\\(overline|bar)\{([^{}]+)\}/g, '$2̄');
+  str = str.replace(/\\(overline|bar)\s+([A-Za-z0-9]+)/g, '$2̄');
 
-  // Thay thế ký hiệu toán học & hóa học
+  // Chuẩn hóa toàn bộ biến thể độ C và góc độ
+  str = str.replace(/\\?\^?\{?\\?circ\}?\s*(?:\\text\{C\}|\\mathrm\{C\}|C\b)/g, '°C');
+  str = str.replace(/\^\{\s*°\s*C\s*\}/g, '°C');
+  str = str.replace(/\^\s*°\s*C\b/g, '°C');
+  str = str.replace(/°\s*C\b/g, '°C');
+  str = str.replace(/\\degree\b/g, '°');
+  str = str.replace(/\^\{\s*\\circ\s*\}/g, '°');
+  str = str.replace(/\^\\circ\b/g, '°');
+  str = str.replace(/\\circ\b/g, '°');
+  str = str.replace(/\^\{\s*°\s*\}/g, '°');
+  str = str.replace(/\^\s*°/g, '°');
+
+  // Chuẩn hóa phân số và căn thức viết không ngoặc { }
+  str = str.replace(/\\(d?frac)\s*(\d)\s*(\d)/g, '\\frac{$2}{$3}');
+  str = str.replace(/\\(d?frac)\{([^{}]+)\}\s*(\d)/g, '\\frac{$2}{$3}');
+  str = str.replace(/\\(d?frac)\s*(\d)\s*\{([^{}]+)\}/g, '\\frac{$2}{$3}');
+  str = str.replace(/\\sqrt\s*(\d)/g, '\\sqrt{$1}');
+  str = str.replace(/\\sqrt\s*([a-zA-Z])/g, '\\sqrt{$1}');
+
+  // Thay thế ký hiệu toán học & hóa học toàn diện
   const symbolMap: [RegExp, string][] = [
+    // Tích phân, vi phân, tổng, tích
+    [/\\iiint(?![a-zA-Z])/g, '∭'], [/\\iint(?![a-zA-Z])/g, '∬'], [/\\oint(?![a-zA-Z])/g, '∮'], [/\\int(?![a-zA-Z])/g, '∫'],
+    [/\\sum(?![a-zA-Z])/g, '∑'], [/\\prod(?![a-zA-Z])/g, '∏'],
+    [/\\partial(?![a-zA-Z])/g, '∂'], [/\\nabla(?![a-zA-Z])/g, '∇'],
+    [/\\prime(?![a-zA-Z])/g, '′'], [/\\mp(?![a-zA-Z])/g, '∓'],
+
+    // Bảng ký tự Hy Lạp chữ thường & in hoa
     [/\\alpha(?![a-zA-Z])/g, 'α'], [/\\beta(?![a-zA-Z])/g, 'β'], [/\\gamma(?![a-zA-Z])/g, 'γ'], [/\\delta(?![a-zA-Z])/g, 'δ'],
-    [/\\epsilon(?![a-zA-Z])/g, 'ε'], [/\\theta(?![a-zA-Z])/g, 'θ'], [/\\lambda(?![a-zA-Z])/g, 'λ'], [/\\pi(?![a-zA-Z])/g, 'π'],
-    [/\\sigma(?![a-zA-Z])/g, 'σ'], [/\\phi(?![a-zA-Z])/g, 'φ'], [/\\omega(?![a-zA-Z])/g, 'ω'], [/\\Delta(?![a-zA-Z])/g, 'Δ'], [/\\Omega(?![a-zA-Z])/g, 'Ω'],
-    [/\\le(q)?(?![a-zA-Z])/g, '≤'], [/\\ge(q)?(?![a-zA-Z])/g, '≥'], [/\\neq(?![a-zA-Z])/g, '≠'], [/\\approx(?![a-zA-Z])/g, '≈'],
-    [/\\infty(?![a-zA-Z])/g, '∞'], [/\\in(?![a-zA-Z])/g, '∈'], [/\\notin(?![a-zA-Z])/g, '∉'], [/\\subset(?![a-zA-Z])/g, '⊂'], [/\\subseteq(?![a-zA-Z])/g, '⊆'],
-    [/\\cup(?![a-zA-Z])/g, '∪'], [/\\cap(?![a-zA-Z])/g, '∩'], [/\\emptyset(?![a-zA-Z])/g, '∅'], [/\\times(?![a-zA-Z])/g, '×'],
-    [/\\cdot(?![a-zA-Z])/g, '·'], [/\\pm(?![a-zA-Z])/g, '±'], [/\\to(?![a-zA-Z])/g, '→'], [/\\rightarrow(?![a-zA-Z])/g, '→'],
+    [/\\epsilon(?![a-zA-Z])/g, 'ε'], [/\\varepsilon(?![a-zA-Z])/g, 'ε'], [/\\zeta(?![a-zA-Z])/g, 'ζ'], [/\\eta(?![a-zA-Z])/g, 'η'],
+    [/\\theta(?![a-zA-Z])/g, 'θ'], [/\\vartheta(?![a-zA-Z])/g, 'θ'], [/\\iota(?![a-zA-Z])/g, 'ι'], [/\\kappa(?![a-zA-Z])/g, 'κ'],
+    [/\\lambda(?![a-zA-Z])/g, 'λ'], [/\\mu(?![a-zA-Z])/g, 'μ'], [/\\nu(?![a-zA-Z])/g, 'ν'], [/\\xi(?![a-zA-Z])/g, 'ξ'],
+    [/\\pi(?![a-zA-Z])/g, 'π'], [/\\varpi(?![a-zA-Z])/g, 'π'], [/\\rho(?![a-zA-Z])/g, 'ρ'], [/\\varrho(?![a-zA-Z])/g, 'ρ'],
+    [/\\sigma(?![a-zA-Z])/g, 'σ'], [/\\varsigma(?![a-zA-Z])/g, 'σ'], [/\\tau(?![a-zA-Z])/g, 'τ'], [/\\upsilon(?![a-zA-Z])/g, 'υ'],
+    [/\\phi(?![a-zA-Z])/g, 'φ'], [/\\varphi(?![a-zA-Z])/g, 'φ'], [/\\chi(?![a-zA-Z])/g, 'χ'], [/\\psi(?![a-zA-Z])/g, 'ψ'], [/\\omega(?![a-zA-Z])/g, 'ω'],
+    [/\\Gamma(?![a-zA-Z])/g, 'Γ'], [/\\Delta(?![a-zA-Z])/g, 'Δ'], [/\\Theta(?![a-zA-Z])/g, 'Θ'], [/\\Lambda(?![a-zA-Z])/g, 'Λ'],
+    [/\\Xi(?![a-zA-Z])/g, 'Ξ'], [/\\Pi(?![a-zA-Z])/g, 'Π'], [/\\Sigma(?![a-zA-Z])/g, 'Σ'], [/\\Upsilon(?![a-zA-Z])/g, 'Υ'],
+    [/\\Phi(?![a-zA-Z])/g, 'Φ'], [/\\Psi(?![a-zA-Z])/g, 'Ψ'], [/\\Omega(?![a-zA-Z])/g, 'Ω'],
+
+    // So sánh & tập hợp & logic
+    [/\\le(q)?(?![a-zA-Z])/g, '≤'], [/\\ge(q)?(?![a-zA-Z])/g, '≥'], [/\\ne(q)?(?![a-zA-Z])/g, '≠'], [/\\approx(?![a-zA-Z])/g, '≈'],
+    [/\\infty(?![a-zA-Z])/g, '∞'], [/\\in(?![a-zA-Z])/g, '∈'], [/\\notin(?![a-zA-Z])/g, '∉'],
+    [/\\subset(?![a-zA-Z])/g, '⊂'], [/\\supset(?![a-zA-Z])/g, '⊃'], [/\\subseteq(?![a-zA-Z])/g, '⊆'], [/\\supseteq(?![a-zA-Z])/g, '⊇'],
+    [/\\cup(?![a-zA-Z])/g, '∪'], [/\\cap(?![a-zA-Z])/g, '∩'], [/\\emptyset(?![a-zA-Z])/g, '∅'], [/\\varnothing(?![a-zA-Z])/g, '∅'],
+    [/\\times(?![a-zA-Z])/g, '×'], [/\\cdot(?![a-zA-Z])/g, '·'], [/\\pm(?![a-zA-Z])/g, '±'],
+    [/\\to(?![a-zA-Z])/g, '→'], [/\\rightarrow(?![a-zA-Z])/g, '→'],
     [/\\uparrow(?![a-zA-Z])/g, '↑'], [/\\downarrow(?![a-zA-Z])/g, '↓'],
     [/\\rightleftharpoons(?![a-zA-Z])/g, '⇌'], [/\\leftarrow(?![a-zA-Z])/g, '←'], [/\\leftrightarrow(?![a-zA-Z])/g, '↔'],
     [/\\Leftarrow(?![a-zA-Z])/g, '⇐'], [/\\Rightarrow(?![a-zA-Z])/g, '⇒'], [/\\Leftrightarrow(?![a-zA-Z])/g, '⇔'],
@@ -398,7 +452,7 @@ export function parseMathChildren(
     [/\\forall(?![a-zA-Z])/g, '∀'], [/\\exists(?![a-zA-Z])/g, '∃'], [/\\angle(?![a-zA-Z])/g, '∠'],
     [/\\sim(?![a-zA-Z])/g, '∼'], [/\\perp(?![a-zA-Z])/g, '⊥'], [/\\parallel(?![a-zA-Z])/g, '∥'], [/\\%/g, '%'],
     [/\\quad/g, '  '], [/\\qquad/g, '    '],
-    [/\\(sin|cos|tan|cot|ln|log|lim|max|min|det|gcd)(?![a-zA-Z])/g, '$1'],
+    [/\\(sin|cos|tan|cot|arcsin|arccos|arctan|arccot|ln|log|lg|exp|lim|max|min|det|gcd)(?![a-zA-Z])/g, '$1'],
     [/\\\,/g, ' '], [/\\;/g, ' '], [/\\:/g, ' '], [/\\!/g, '']
   ];
 
@@ -651,10 +705,12 @@ export function parseMathChildren(
         while (cur < str.length && str[cur] === ' ') cur++;
         const denGroup = extractBraceGroup(str, cur);
         if (denGroup) {
+          const numChildren = parseMathChildren(numGroup.content);
+          const denChildren = parseMathChildren(denGroup.content);
           elements.push(
             new MathFraction({
-              numerator: parseMathChildren(numGroup.content),
-              denominator: parseMathChildren(denGroup.content),
+              numerator: numChildren.length > 0 ? numChildren : [new MathRun('')],
+              denominator: denChildren.length > 0 ? denChildren : [new MathRun('')],
             })
           );
           i = denGroup.endIdx + 1;
@@ -678,9 +734,10 @@ export function parseMathChildren(
       while (cur < str.length && str[cur] === ' ') cur++;
       const bodyGroup = extractBraceGroup(str, cur);
       if (bodyGroup) {
+        const radChildren = parseMathChildren(bodyGroup.content);
         elements.push(
           new MathRadical({
-            children: parseMathChildren(bodyGroup.content),
+            children: radChildren.length > 0 ? radChildren : [new MathRun('')],
             ...(degreeGroup ? { degree: parseMathChildren(degreeGroup) } : {}),
           })
         );
@@ -740,28 +797,34 @@ export function parseMathChildren(
         baseElements = [new MathRun(' ')];
       }
 
+      const safeBase = baseElements.length > 0 ? baseElements : [new MathRun(' ')];
+
       if (secondArgContent !== null) {
         const subContent = isSuper ? secondArgContent : argContent;
         const superContent = isSuper ? argContent : secondArgContent;
+        const subParsed = parseMathChildren(subContent);
+        const supParsed = parseMathChildren(superContent);
         elements.push(
           new MathSubSuperScript({
-            children: baseElements,
-            subScript: parseMathChildren(subContent),
-            superScript: parseMathChildren(superContent),
+            children: safeBase,
+            subScript: subParsed.length > 0 ? subParsed : [new MathRun('')],
+            superScript: supParsed.length > 0 ? supParsed : [new MathRun('')],
           })
         );
       } else if (isSuper) {
+        const supParsed = parseMathChildren(argContent);
         elements.push(
           new MathSuperScript({
-            children: baseElements,
-            superScript: parseMathChildren(argContent),
+            children: safeBase,
+            superScript: supParsed.length > 0 ? supParsed : [new MathRun('')],
           })
         );
       } else {
+        const subParsed = parseMathChildren(argContent);
         elements.push(
           new MathSubScript({
-            children: baseElements,
-            subScript: parseMathChildren(argContent),
+            children: safeBase,
+            subScript: subParsed.length > 0 ? subParsed : [new MathRun('')],
           })
         );
       }
@@ -938,10 +1001,9 @@ function processPlainPart(plain: string): string {
   // Loại bỏ dấu '\' thừa dính trước từ tiếng Việt (ví dụ: \Diện tích -> Diện tích, \Chiều rộng -> Chiều rộng)
   str = str.replace(/\\([A-Za-z]*[àáảãạâầấẩẫậăằắẳẵặèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ][A-Za-zàáảãạâầấẩẫậăằắẳẵặèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ]*)/g, '$1');
 
-  // Dọn dẹp dấu '\' đơn độc trước từ viết hoa
-  str = str.replace(/([.?!])\s*\\\s*([A-ZÀÁẢÃẠÂẦẤẨẪẬĂẰẮẲẴẶÈÉẺẼẸÊỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢÙÚỦŨỤƯỪỨỬỮỰỲÝỶỸỴĐ])/g, '$1\n$2');
-  str = str.replace(/(^|\n)\s*\\\s*/g, '$1');
-  str = str.replace(/\s*\\\s*$/g, '');
+  // Dọn dẹp dấu '\' đơn độc không đi liền với lệnh LaTeX
+  str = str.replace(/(^|\n)\s*\\+(?=\s|[.,;:?!]|$)/g, '$1');
+  str = str.replace(/\s*\\+$/g, '');
 
   // 2. Dọn dẹp dấu $ bị lẻ/mồ côi dán trực tiếp vào lệnh LaTeX (e.g., \cdot$ -> \cdot)
   str = str.replace(/(\\[a-zA-Z]+(\{[^{}]*\})*)\$/g, '$1');
@@ -965,16 +1027,31 @@ function processPlainPart(plain: string): string {
   str = str.replace(/([a-zàáảãạâầấẩẫậăằắẳẵặèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ])(\d+)/g, '$1 $2');
   str = str.replace(/(\d+)\s*cm([a-zàáảãạâầấẩẫậăằắẳẵặèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ])/g, '$1 cm $2');
 
-  // 7. Chuẩn hóa góc 60\circ, 50\circ -> 50^\circ
-  str = str.replace(/(\d+)\s*\\\^?\{?circ\}?/g, '$1^\\circ');
+  // 7a. Chuẩn hóa nhiệt độ độ C trong văn bản: -1{,}8\circC, 4{,}5\circC, 25^\circC, 25 ^\circ C, 25° C, 25^{\circ}C -> -1,8°C
+  str = str.replace(/(-?\d+(?:(?:[.,]|\{,\})\d+)?)\s*(?:\\?\^?\{?\\?circ\}?\s*(?:\\text\{C\}|\\mathrm\{C\}|C\b)|\^\s*°\s*C\b|°\s*C\b)/g, (m, num) => {
+    const cleanNum = num.replace(/\{,\}/g, ',');
+    return `${cleanNum}°C`;
+  });
+
+  // 7b. Chuẩn hóa góc độ trong văn bản: 60\circ, 60^{\circ}, 60^\circ, 60° -> 60°
+  str = str.replace(/([0-9]+(?:[.,{}]\d+)?)\s*(?:\\\^?\{?circ\}?|\^\s*°|°)(?!\s*[a-zA-Z])/g, (m, num) => {
+    const cleanNum = num.replace(/\{,\}/g, ',');
+    return `${cleanNum}°`;
+  });
+
+  // 7c. Chuyển đổi các mũi tên trong ngữ cảnh tiếng Việt (ví dụ: "Cộng và trừ \rightarrow Nhân và chia" -> "Cộng và trừ → Nhân và chia")
+  str = str.replace(/(?<=[àáảãạâầấẩẫậăằắẳẵặèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ\s])\\rightarrow(?=[\sàáảãạâầấẩẫậăằắẳẵặèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ])/g, '→');
+  str = str.replace(/(?<=[àáảãạâầấẩẫậăằắẳẵặèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ\s])\\Rightarrow(?=[\sàáảãạâầấẩẫậăằắẳẵặèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ])/g, '⇒');
+  str = str.replace(/(?<=[àáảãạâầấẩẫậăằắẳẵặèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ\s])\\Leftrightarrow(?=[\sàáảãạâầấẩẫậăằắẳẵặèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ])/g, '⇔');
 
   // 8. Tự động bọc $...$ cho các phương trình hóa học, công thức và biểu thức toán/hóa học chưa bọc $...$
-  // 8a. Phương trình hóa học chứa mũi tên phản ứng
+  // 8a. Phương trình hóa học chứa mũi tên phản ứng (chỉ bọc khi không chứa từ ngữ tiếng Việt)
   str = str.replace(
-    /(?:[A-Za-z0-9_\{\}\(\)\+\-\*\/\=\,\.\:\%\^\circ\s]|\\text\{[^{}]*\}|\\mathrm\{[^{}]*\})*\s*\\(xrightleftharpoons|xrightarrow|xleftarrow|rightarrow|Rightarrow|leftrightarrow|rightleftharpoons)(?:\[[^{}]*\])?(?:\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})*\s*(?:[A-Za-z0-9_\{\}\(\)\+\-\*\/\=\,\.\:\%\^\circ\s\\uparrow\\downarrow]|\\text\{[^{}]*\}|\\mathrm\{[^{}]*\})*/g,
+    /(?:[A-Za-z0-9_\{\}\(\)\+\-\*\/\=\,\.\:\%\^\circ\s]|\\text\{[^{}]*\}|\\mathrm\{[^{}]*\})*\s*\\(xrightleftharpoons|xrightarrow|xleftarrow|rightleftharpoons)(?:\[[^{}]*\])?(?:\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})*\s*(?:[A-Za-z0-9_\{\}\(\)\+\-\*\/\=\,\.\:\%\^\circ\s\\uparrow\\downarrow]|\\text\{[^{}]*\}|\\mathrm\{[^{}]*\})*/g,
     (match) => {
       const trimmed = match.trim();
       if (!trimmed || trimmed.startsWith('$')) return match;
+      if (/[àáảãạâầấẩẫậăằắẳẵặèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ]/i.test(match)) return match;
       return ` $${trimmed}$ `;
     }
   );
@@ -986,14 +1063,16 @@ function processPlainPart(plain: string): string {
   const cmdRegex = new RegExp(
     '(?:(?<=\\s|^|[([{:;])([a-zA-Z](?:\'|\\d+|\\([a-zA-Z0-9]+\\))?\\s*[\\=\\<\\>\\le\\ge\\neq\\approx\\in]\\s*))?(\\\\' +
       validMathCommands +
+      '(?:\\s+(?:[A-Z]\\b|[a-z]\\b|\\d+|\\([A-Za-z0-9_\\^\\+\\-]+\\)))?' +
       ')((?:\\s*[\\+\\-\\*/\\=\\<\\>\\le\\ge\\neq\\approx]\\s*(?:\\\\(?:d?frac\\{[^{}]*(?:\\{[^{}]*\\}[^{}]*)*\\}\\{[^{}]*(?:\\{[^{}]*\\}[^{}]*)*\\}|sqrt(?:\\[[^\\]]*\\])?\\{[^{}]*(?:\\{[^{}]*\\}[^{}]*)*\\}|[a-zA-Z]+(?:\\{[^{}]*\\})*)|[a-zA-Z0-9_\'\\.\\^]+|\\d+(?:\\,\\d+)?))*)',
     'g'
   );
 
   str = str.replace(cmdRegex, (match, lhs, cmd, rhs) => {
     if (/^\\(begin|end|n|t|r)$/.test(cmd)) return match;
-    if (/[àáảãạâầấẩẫậăằắẳẵặèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ]/i.test(match)) {
-      return match.replace(/^\\/, '');
+    const strippedTextMacros = match.replace(/\\(text|mathrm|mathbf|mathit|ce)\{[^{}]*\}/g, '');
+    if (/[àáảãạâầấẩẫậăằắẳẵặèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ]/i.test(strippedTextMacros)) {
+      return match;
     }
     let formula = (lhs || '') + cmd + (rhs || '');
     let trimmed = formula.trim();
@@ -1020,7 +1099,7 @@ function processPlainPart(plain: string): string {
  */
 export function sanitizeLatexControlChars(text: string): string {
   if (!text) return text;
-  let str = text;
+  let str = repairLatexCorruptions(text);
 
   // 1. Khôi phục các ký tự điều khiển ASCII do JSON.parse lỡ chuyển đổi từ \b, \f, \t, \r
   str = str.replace(/\x08(egin|ar|eta|ox|ullet|inom|old|box)/g, '\\$1');
@@ -1040,8 +1119,8 @@ export function sanitizeLatexControlChars(text: string): string {
   // 3. Sửa các môi trường LaTeX bị mất dấu \ phía trước
   str = str.replace(/(^|[^\\])\b(begin|end)\{(cases|aligned|array|matrix|pmatrix|bmatrix)\}/g, '$1\\$2{$3}');
 
-  // 4. Sửa các lệnh LaTeX phổ biến bị mất dấu \ phía trước
-  str = str.replace(/(^|[^\\a-zA-Z])\b(mathbb|sqrt|d?frac|widehat|overline|vec|Delta|alpha|beta|gamma|delta|epsilon|theta|lambda|pi|sigma|phi|omega|Omega|angle|triangle|cong|equiv|approx|degree|Leftrightarrow|Rightarrow|rightarrow|forall|exists|notin|xrightleftharpoons|xrightarrow|xleftarrow|rightleftharpoons|uparrow|downarrow)\b/g, '$1\\$2');
+  // 4. Sửa các lệnh LaTeX phổ biến bị mất dấu \ phía trước (bao gồm \right và \left)
+  str = str.replace(/(^|[^\\a-zA-Z])\b(right|left|mathbb|sqrt|d?frac|widehat|overline|vec|Delta|alpha|beta|gamma|delta|epsilon|theta|lambda|pi|sigma|phi|omega|Omega|angle|triangle|cong|equiv|approx|degree|Leftrightarrow|Rightarrow|rightarrow|forall|exists|notin|xrightleftharpoons|xrightarrow|xleftarrow|rightleftharpoons|uparrow|downarrow)\b/g, '$1\\$2');
 
   return str;
 }
@@ -1104,7 +1183,7 @@ export function autoWrapUnwrappedLatex(text: string): string {
 
   // 2. Tự động bọc $$...$$ cho các môi trường LaTeX nhiều dòng như \begin{cases} ... \end{cases} chưa bọc $ hoặc $$
   cleanedText = cleanedText.replace(
-    /(^|[^\$])(\\begin\{(cases|aligned|array|matrix|pmatrix|bmatrix)\}[\s\S]*?\\end\{\3\})([^\$]|$)/g,
+    /(^|[^\$])((?:\\(?:Leftrightarrow|Rightarrow|Leftarrow)\s*)?\\begin\{(cases|aligned|array|matrix|pmatrix|bmatrix)\}[\s\S]*?\\end\{\3\})([^\$]|$)/g,
     (_, p1, p2, p3, p4) => `${p1} $$${p2}$$ ${p4}`
   );
 
@@ -1471,8 +1550,13 @@ async function buildContentParagraphs(
   svgDiagramStr?: string | null
 ): Promise<Paragraph[]> {
   const paragraphs: Paragraph[] = [];
-  const cleanText = normalizeNewlines(stripSvgCode(text || ''));
-  const lines = cleanText.split('\n');
+  let preparedText = normalizeNewlines(stripSvgCode(text || ''));
+  // Tự động chuẩn hóa và bọc công thức chưa có dấu $
+  preparedText = autoWrapUnwrappedLatex(preparedText);
+  // Bảo vệ khối công thức $$...$$ và $...$ không bị ngắt vụn bởi dấu xuống dòng
+  preparedText = preparedText.replace(/\$\$([\s\S]*?)\$\$/g, (m, inner) => '$$' + inner.replace(/[\r\n]+/g, ' ').trim() + '$$');
+  preparedText = preparedText.replace(/\$([^$]+)\$/g, (m, inner) => '$' + inner.replace(/[\r\n]+/g, ' ').trim() + '$');
+  const lines = preparedText.split('\n');
 
   for (let idx = 0; idx < lines.length; idx++) {
     const line = lines[idx];

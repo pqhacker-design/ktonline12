@@ -1,4 +1,56 @@
 import { AppSettings, ExamPackage, QuestionBankItem } from '../types';
+import { repairLatexCorruptions } from '../utils/textUtils';
+
+function repairQuestionItem<T extends { content?: string; options?: any[]; trueFalseStatements?: any[]; shortAnswer?: string; essayAnswerGuide?: string; explanation?: string; rubric?: any[] }>(q: T): T {
+  if (!q) return q;
+  return {
+    ...q,
+    content: q.content ? repairLatexCorruptions(q.content) : q.content,
+    shortAnswer: q.shortAnswer ? repairLatexCorruptions(q.shortAnswer) : q.shortAnswer,
+    essayAnswerGuide: q.essayAnswerGuide ? repairLatexCorruptions(q.essayAnswerGuide) : q.essayAnswerGuide,
+    explanation: q.explanation ? repairLatexCorruptions(q.explanation) : q.explanation,
+    options: q.options?.map((opt: any) => ({
+      ...opt,
+      content: opt.content ? repairLatexCorruptions(opt.content) : opt.content,
+    })),
+    trueFalseStatements: q.trueFalseStatements?.map((tf: any) => ({
+      ...tf,
+      content: tf.content ? repairLatexCorruptions(tf.content) : tf.content,
+    })),
+    rubric: q.rubric?.map((r: any) => ({
+      ...r,
+      criteria: r.criteria ? repairLatexCorruptions(r.criteria) : r.criteria,
+      description: r.description ? repairLatexCorruptions(r.description) : r.description,
+    })),
+  };
+}
+
+function repairExamPackageStrings(p: ExamPackage): ExamPackage {
+  if (!p) return p;
+  return {
+    ...p,
+    exams: p.exams?.map((e) => ({
+      ...e,
+      questions: e.questions?.map((q) => repairQuestionItem(q)),
+    })),
+    answerKeys: p.answerKeys?.map((ak) => ({
+      ...ak,
+      part3Answers: ak.part3Answers?.map((a) => ({
+        ...a,
+        shortAnswer: a.shortAnswer ? repairLatexCorruptions(a.shortAnswer) : a.shortAnswer,
+      })),
+      part4Answers: ak.part4Answers?.map((a) => ({
+        ...a,
+        essayAnswerGuide: a.essayAnswerGuide ? repairLatexCorruptions(a.essayAnswerGuide) : a.essayAnswerGuide,
+        rubric: a.rubric?.map((r: any) => ({
+          ...r,
+          criteria: r.criteria ? repairLatexCorruptions(r.criteria) : r.criteria,
+          description: r.description ? repairLatexCorruptions(r.description) : r.description,
+        })),
+      })),
+    })),
+  };
+}
 
 const STORAGE_KEYS = {
   SETTINGS: 'aitest_settings_v1',
@@ -65,21 +117,23 @@ export class StorageEngine {
       if (!raw) return [];
       const list: ExamPackage[] = JSON.parse(raw);
       if (!Array.isArray(list)) return [];
-      return list.filter((p) => {
-        if (!p || !p.id) return false;
-        // Bỏ qua các đề bị lỗi hỏng do AI chỉ sinh số "0", "1" và "Phương án A"
-        const firstExam = p.exams?.[0];
-        if (firstExam && Array.isArray(firstExam.questions) && firstExam.questions.length > 0) {
-          const isCorrupted = firstExam.questions.some((q) => {
-            const c = String(q.content || '').trim();
-            const isSingleDigit = c === '0' || c === '1' || c === '2';
-            const hasDummyOpt = q.options?.some((opt) => opt.content === 'Phương án A');
-            return isSingleDigit || hasDummyOpt;
-          });
-          if (isCorrupted) return false;
-        }
-        return true;
-      });
+      return list
+        .filter((p) => {
+          if (!p || !p.id) return false;
+          // Bỏ qua các đề bị lỗi hỏng do AI chỉ sinh số "0", "1" và "Phương án A"
+          const firstExam = p.exams?.[0];
+          if (firstExam && Array.isArray(firstExam.questions) && firstExam.questions.length > 0) {
+            const isCorrupted = firstExam.questions.some((q) => {
+              const c = String(q.content || '').trim();
+              const isSingleDigit = c === '0' || c === '1' || c === '2';
+              const hasDummyOpt = q.options?.some((opt) => opt.content === 'Phương án A');
+              return isSingleDigit || hasDummyOpt;
+            });
+            if (isCorrupted) return false;
+          }
+          return true;
+        })
+        .map(repairExamPackageStrings);
     } catch {
       return [];
     }
@@ -131,7 +185,7 @@ export class StorageEngine {
       if (!raw) return [];
       const list: QuestionBankItem[] = JSON.parse(raw);
       if (!Array.isArray(list)) return [];
-      return list.filter((q) => q && q.id);
+      return list.filter((q) => q && q.id).map((q) => repairQuestionItem(q));
     } catch {
       return [];
     }

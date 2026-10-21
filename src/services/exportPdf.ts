@@ -1,13 +1,80 @@
+import katex from 'katex';
+import 'katex/dist/contrib/mhchem.js';
 import { ExamPackage, getCognitiveTag } from '../types';
-import { autoWrapUnwrappedLatex } from './exportDocx';
-import { normalizeNewlines } from '../utils/textUtils';
+import { autoWrapUnwrappedLatex, cleanLatexForDocx } from './exportDocx';
+import { normalizeNewlines, cleanMathNewlines, repairLatexCorruptions } from '../utils/textUtils';
+
+/**
+ * Tiền xử lý và biên dịch các công thức toán LaTeX thành chuỗi HTML KaTeX trực tiếp
+ * Đảm bảo khi in hoặc lưu PDF, 100% công thức hiển thị chính xác không phụ thuộc vào tốc độ tải script CDN
+ */
+function renderMathToHtml(text: string): string {
+  if (!text) return '';
+  let prepared = repairLatexCorruptions(text);
+  prepared = normalizeNewlines(prepared);
+  prepared = prepared.replace(/\\\[([\s\S]*?)\\\]/g, (_, inner) => `$$${inner.trim()}$$`);
+  prepared = prepared.replace(/\\\(([\s\S]*?)\\\)/g, (_, inner) => `$${inner.trim()}$`);
+  const formatted = autoWrapUnwrappedLatex(prepared);
+
+  const mathRegex = /(\$\$[\s\S]*?\$\$|\$[^\$]+?\$)/gs;
+  const parts = formatted.split(mathRegex);
+
+  return parts
+    .map((part) => {
+      if (!part) return '';
+
+      if (part.startsWith('$$') && part.endsWith('$$') && part.length >= 4) {
+        let mathStr = cleanMathNewlines(part.slice(2, -2)).replace(/\\$/, '');
+        mathStr = mathStr.replace(/\\?\^?\{?\\?circ\}?\s*(?:\\text\{C\}|\\mathrm\{C\}|C\b)/g, '^\\circ\\text{C}')
+                         .replace(/\^\{\s*°\s*C\s*\}/g, '^\\circ\\text{C}')
+                         .replace(/\^\s*°\s*C\b/g, '^\\circ\\text{C}')
+                         .replace(/°\s*C\b/g, '^\\circ\\text{C}')
+                         .replace(/\\degree\b/g, '^\\circ')
+                         .replace(/\^\{\s*°\s*\}/g, '^\\circ')
+                         .replace(/\^\s*°/g, '^\\circ')
+                         .replace(/°/g, '^\\circ')
+                         .replace(/(\d+)\s*\\circ\b/g, '$1^\\circ');
+        try {
+          return `<div class="katex-display" style="margin: 8px 0; text-align: center; overflow-x: auto;">${katex.renderToString(mathStr, { displayMode: true, throwOnError: false })}</div>`;
+        } catch {
+          return `<div class="katex-display font-mono text-center" style="margin: 8px 0;">${cleanLatexForDocx(mathStr) || mathStr}</div>`;
+        }
+      }
+
+      if (part.startsWith('$') && part.endsWith('$') && part.length >= 2) {
+        let mathStr = cleanMathNewlines(part.slice(1, -1)).replace(/\\$/, '');
+        mathStr = mathStr.replace(/\\?\^?\{?\\?circ\}?\s*(?:\\text\{C\}|\\mathrm\{C\}|C\b)/g, '^\\circ\\text{C}')
+                         .replace(/\^\{\s*°\s*C\s*\}/g, '^\\circ\\text{C}')
+                         .replace(/\^\s*°\s*C\b/g, '^\\circ\\text{C}')
+                         .replace(/°\s*C\b/g, '^\\circ\\text{C}')
+                         .replace(/\\degree\b/g, '^\\circ')
+                         .replace(/\^\{\s*°\s*\}/g, '^\\circ')
+                         .replace(/\^\s*°/g, '^\\circ')
+                         .replace(/°/g, '^\\circ')
+                         .replace(/(\d+)\s*\\circ\b/g, '$1^\\circ');
+        const isMultiLine = /\\begin\{(cases|aligned|array|matrix|pmatrix|bmatrix)\}/.test(mathStr);
+        try {
+          return katex.renderToString(mathStr, { displayMode: isMultiLine, throwOnError: false });
+        } catch {
+          return `<span>${cleanLatexForDocx(mathStr) || mathStr}</span>`;
+        }
+      }
+
+      let cleanP = normalizeNewlines(part);
+      cleanP = cleanP.replace(/\\rightarrow(?![a-zA-Z])/g, ' → ')
+                     .replace(/\\Leftrightarrow(?![a-zA-Z])/g, ' ⇔ ')
+                     .replace(/\\Rightarrow(?![a-zA-Z])/g, ' ⇒ ');
+      return cleanP.replace(/\n/g, '<br/>');
+    })
+    .join('');
+}
 
 export class ExportPdf {
   /**
    * Tạo cửa sổ in / PDF cho Đề thi hoặc Gói Đề thi hoàn chỉnh
    */
   static printExamPackage(examPack: ExamPackage, selectedCode?: string): void {
-    const { metadata, matrix, specification, exams, answerKeys } = examPack;
+    const { metadata, exams } = examPack;
 
     const filteredExams = selectedCode
       ? exams.filter((e) => e.code === selectedCode)
@@ -19,10 +86,7 @@ export class ExportPdf {
     <head>
       <meta charset="UTF-8">
       <title>Đề kiểm tra Công văn 7991 - ${metadata.subject}</title>
-      <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
-      <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
-      <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/mhchem.min.js"></script>
-      <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js"></script>
+      <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.18.1/dist/katex.min.css" crossorigin="anonymous">
       <style>
         @page {
           size: A4;
@@ -31,7 +95,7 @@ export class ExportPdf {
         body {
           font-family: "Times New Roman", Times, serif;
           font-size: 13pt;
-          line-height: 1.4;
+          line-height: 1.45;
           color: #000;
           background: #fff;
           margin: 0;
@@ -63,13 +127,13 @@ export class ExportPdf {
         .section-title {
           font-weight: bold;
           font-size: 12pt;
-          margin-top: 15px;
+          margin-top: 18px;
           margin-bottom: 8px;
           color: #000;
           text-transform: uppercase;
         }
         .question-box {
-          margin-bottom: 12px;
+          margin-bottom: 14px;
         }
         .question-num {
           font-weight: bold;
@@ -77,13 +141,13 @@ export class ExportPdf {
         .options-grid {
           display: grid;
           grid-template-columns: repeat(2, 1fr);
-          gap: 6px 15px;
+          gap: 6px 20px;
           margin-left: 20px;
-          margin-top: 4px;
+          margin-top: 6px;
         }
         .statement-list {
           margin-left: 20px;
-          margin-top: 4px;
+          margin-top: 6px;
         }
         table.border-table {
           width: 100%;
@@ -113,15 +177,18 @@ export class ExportPdf {
           page-break-after: always;
           break-after: page;
         }
+        .katex {
+          font-size: 1.05em !important;
+        }
         @media print {
-          .no-print { display: none; }
+          .no-print { display: none !important; }
         }
       </style>
     </head>
     <body>
-      <div class="no-print" style="padding: 10px; background: #008080; color: white; text-align: center; font-family: sans-serif;">
-        <button onclick="window.print()" style="padding: 8px 16px; font-size: 14px; font-weight: bold; cursor: pointer; background: #fff; color: #008080; border: none; border-radius: 4px;">
-          🖨️ Nhấn vào đây để In / Tải PDF
+      <div class="no-print" style="padding: 12px; background: #008080; color: white; text-align: center; font-family: sans-serif;">
+        <button onclick="window.print()" style="padding: 8px 20px; font-size: 14px; font-weight: bold; cursor: pointer; background: #fff; color: #008080; border: none; border-radius: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">
+          🖨️ Nhấn vào đây để In / Lưu PDF
         </button>
       </div>
     `;
@@ -133,12 +200,12 @@ export class ExportPdf {
           <table class="header-table">
             <tr>
               <td style="width: 50%; text-align: center;">
-                <b>${metadata.departmentName.toUpperCase()}</b><br>
-                <b>${metadata.schoolName.toUpperCase()}</b>
+                <b>${(metadata.departmentName || 'SỞ GIÁO DỤC VÀ ĐÀO TẠO').toUpperCase()}</b><br>
+                <b>${(metadata.schoolName || 'TRƯỜNG THCS/THPT').toUpperCase()}</b>
               </td>
               <td style="width: 50%; text-align: center;">
-                <b>KỲ THI ${metadata.examTitle.toUpperCase()}</b><br>
-                <b>NĂM HỌC ${metadata.schoolYear}</b>
+                <b>KỲ THI ${(metadata.examTitle || 'KIỂM TRA').toUpperCase()}</b><br>
+                <b>NĂM HỌC ${metadata.schoolYear || '2026 - 2027'}</b>
               </td>
             </tr>
           </table>
@@ -164,19 +231,19 @@ export class ExportPdf {
         const tag = getCognitiveTag(q.cognitiveLevel, q.partType);
         htmlContent += `
           <div class="question-box">
-            <span class="question-num">Câu ${q.number} ${tag ? `<span style="color:#d97706; font-size: 11pt;">${tag}</span>` : ''}:</span> ${autoWrapUnwrappedLatex(q.content)}
+            <span class="question-num">Câu ${q.number} ${tag ? `<span style="color:#d97706; font-size: 11pt;">${tag}</span>` : ''}:</span> ${renderMathToHtml(q.content)}
         `;
 
         if (q.partType === 'PART1' && q.options) {
           htmlContent += `<div class="options-grid">`;
           q.options.forEach((opt) => {
-            htmlContent += `<div><b>${opt.key}.</b> ${autoWrapUnwrappedLatex(opt.content)}</div>`;
+            htmlContent += `<div><b>${opt.key}.</b> ${renderMathToHtml(opt.content)}</div>`;
           });
           htmlContent += `</div>`;
         } else if (q.partType === 'PART2' && q.trueFalseStatements) {
           htmlContent += `<div class="statement-list">`;
           q.trueFalseStatements.forEach((tf) => {
-            htmlContent += `<div><b>${tf.key})</b> ${autoWrapUnwrappedLatex(tf.content)}</div>`;
+            htmlContent += `<div><b>${tf.key})</b> ${renderMathToHtml(tf.content)}</div>`;
           });
           htmlContent += `</div>`;
         }
@@ -192,22 +259,13 @@ export class ExportPdf {
       `;
     });
 
-    // Render KaTeX khi load xong và kích hoạt Lệnh In
     htmlContent += `
       <script>
         function triggerPrint() {
-          if (typeof renderMathInElement === 'function') {
-            renderMathInElement(document.body, {
-              delimiters: [
-                {left: "$$", right: "$$", display: true},
-                {left: "$", right: "$", display: false}
-              ]
-            });
-          }
           setTimeout(function() {
             window.focus();
             window.print();
-          }, 300);
+          }, 350);
         }
         if (document.readyState === "complete" || document.readyState === "interactive") {
           triggerPrint();
@@ -219,43 +277,7 @@ export class ExportPdf {
     </html>
     `;
 
-    let printWindow: Window | null = null;
-    try {
-      printWindow = window.open('', '_blank');
-    } catch (e) {
-      printWindow = null;
-    }
-
-    if (printWindow) {
-      printWindow.document.open();
-      printWindow.document.write(htmlContent);
-      printWindow.document.close();
-    } else {
-      // Fallback cho iFrame sandbox trong AI Studio / Preview
-      const iframe = document.createElement('iframe');
-      iframe.style.position = 'fixed';
-      iframe.style.right = '0';
-      iframe.style.bottom = '0';
-      iframe.style.width = '0';
-      iframe.style.height = '0';
-      iframe.style.border = '0';
-      iframe.style.zIndex = '-9999';
-      document.body.appendChild(iframe);
-
-      const doc = iframe.contentWindow?.document || iframe.contentDocument;
-      if (doc) {
-        doc.open();
-        doc.write(htmlContent);
-        doc.close();
-        setTimeout(() => {
-          try {
-            if (document.body.contains(iframe)) {
-              document.body.removeChild(iframe);
-            }
-          } catch (e) {}
-        }, 5000);
-      }
-    }
+    this.executePrint(htmlContent);
   }
 
   /**
@@ -274,13 +296,10 @@ export class ExportPdf {
     <head>
       <meta charset="UTF-8">
       <title>ĐÁP ÁN VÀ HƯỚNG DẪN CHẤM - ${metadata.subject}</title>
-      <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
-      <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
-      <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/mhchem.min.js"></script>
-      <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js"></script>
+      <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.18.1/dist/katex.min.css" crossorigin="anonymous">
       <style>
         @page { size: A4; margin: 1.5cm; }
-        body { font-family: "Times New Roman", Times, serif; font-size: 13pt; line-height: 1.4; color: #000; background: #fff; margin: 0; padding: 0; }
+        body { font-family: "Times New Roman", Times, serif; font-size: 13pt; line-height: 1.45; color: #000; background: #fff; margin: 0; padding: 0; }
         .header-table { width: 100%; border-collapse: collapse; margin-bottom: 15px; }
         .header-table td { vertical-align: top; padding: 2px; }
         .title-main { text-align: center; font-weight: bold; font-size: 15pt; margin-top: 10px; margin-bottom: 15px; text-transform: uppercase; color: #008080; }
@@ -292,16 +311,16 @@ export class ExportPdf {
         .essay-title { font-weight: bold; font-size: 12pt; color: #008080; margin-bottom: 6px; }
         .essay-guide { white-space: pre-wrap; font-size: 11.5pt; margin-bottom: 8px; line-height: 1.5; }
         .page-break { page-break-after: always; break-after: page; }
-        @media print { .no-print { display: none; } }
+        .katex { font-size: 1.05em !important; }
+        @media print { .no-print { display: none !important; } }
       </style>
     </head>
     <body>
-      <div class="no-print" style="padding: 10px; background: #008080; color: white; text-align: center; font-family: sans-serif;">
-        <button onclick="window.print()" style="padding: 8px 16px; font-size: 14px; font-weight: bold; cursor: pointer; background: #fff; color: #008080; border: none; border-radius: 4px;">
-          🖨️ Nhấn vào đây để In / Tải PDF Đáp Án
+      <div class="no-print" style="padding: 12px; background: #008080; color: white; text-align: center; font-family: sans-serif;">
+        <button onclick="window.print()" style="padding: 8px 20px; font-size: 14px; font-weight: bold; cursor: pointer; background: #fff; color: #008080; border: none; border-radius: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">
+          🖨️ Nhấn vào đây để In / Lưu PDF Đáp Án
         </button>
       </div>
-
     `;
 
     filteredAK.forEach((ak, idx) => {
@@ -310,12 +329,12 @@ export class ExportPdf {
             <table class="header-table">
               <tr>
                 <td style="width: 50%; text-align: center;">
-                  <b>${metadata.departmentName.toUpperCase()}</b><br>
-                  <b>${metadata.schoolName.toUpperCase()}</b>
+                  <b>${(metadata.departmentName || 'SỞ GIÁO DỤC VÀ ĐÀO TẠO').toUpperCase()}</b><br>
+                  <b>${(metadata.schoolName || 'TRƯỜNG THCS/THPT').toUpperCase()}</b>
                 </td>
                 <td style="width: 50%; text-align: center;">
-                  <b>KỲ THI ${metadata.examTitle.toUpperCase()}</b><br>
-                  <b>NĂM HỌC ${metadata.schoolYear}</b>
+                  <b>KỲ THI ${(metadata.examTitle || 'KIỂM TRA').toUpperCase()}</b><br>
+                  <b>NĂM HỌC ${metadata.schoolYear || '2026 - 2027'}</b>
                 </td>
               </tr>
             </table>
@@ -371,7 +390,7 @@ export class ExportPdf {
               ${ak.part3Answers.map((a) => `<th>Câu ${a.questionNumber}</th>`).join('')}
             </tr>
             <tr>
-              ${ak.part3Answers.map((a) => `<td><b>${autoWrapUnwrappedLatex(a.shortAnswer)}</b></td>`).join('')}
+              ${ak.part3Answers.map((a) => `<td><b>${renderMathToHtml(a.shortAnswer)}</b></td>`).join('')}
             </tr>
           </table>
         `;
@@ -386,7 +405,7 @@ export class ExportPdf {
           htmlContent += `
             <div class="essay-box">
               <div class="essay-title">Câu ${ans.questionNumber} (${ans.points} điểm)</div>
-              <div class="essay-guide"><b>Hướng dẫn giải:</b><br>${autoWrapUnwrappedLatex(normalizeNewlines(ans.essayAnswerGuide)).replace(/\n/g, '<br/>')}</div>
+              <div class="essay-guide"><b>Hướng dẫn giải:</b><br>${renderMathToHtml(ans.essayAnswerGuide)}</div>
           `;
 
           if (ans.rubric && ans.rubric.length > 0) {
@@ -399,9 +418,9 @@ export class ExportPdf {
                 </tr>
                 ${ans.rubric.map((r) => `
                   <tr>
-                    <td style="text-align: left;"><b>${autoWrapUnwrappedLatex(r.criteria)}</b></td>
+                    <td style="text-align: left;"><b>${renderMathToHtml(r.criteria)}</b></td>
                     <td><b>${r.points}đ</b></td>
-                    <td style="text-align: left;">${autoWrapUnwrappedLatex(r.description)}</td>
+                    <td style="text-align: left;">${renderMathToHtml(r.description)}</td>
                   </tr>
                 `).join('')}
               </table>
@@ -415,22 +434,13 @@ export class ExportPdf {
       htmlContent += `</div>`;
     });
 
-    // Render KaTeX khi load xong và kích hoạt Lệnh In
     htmlContent += `
       <script>
         function triggerPrint() {
-          if (typeof renderMathInElement === 'function') {
-            renderMathInElement(document.body, {
-              delimiters: [
-                {left: "$$", right: "$$", display: true},
-                {left: "$", right: "$", display: false}
-              ]
-            });
-          }
           setTimeout(function() {
             window.focus();
             window.print();
-          }, 300);
+          }, 350);
         }
         if (document.readyState === "complete" || document.readyState === "interactive") {
           triggerPrint();
@@ -442,10 +452,17 @@ export class ExportPdf {
     </html>
     `;
 
+    this.executePrint(htmlContent);
+  }
+
+  /**
+   * Thực thi mở cửa sổ In / PDF an toàn kể cả trong môi trường iFrame sandbox
+   */
+  private static executePrint(htmlContent: string): void {
     let printWindow: Window | null = null;
     try {
       printWindow = window.open('', '_blank');
-    } catch (e) {
+    } catch {
       printWindow = null;
     }
 
@@ -454,6 +471,7 @@ export class ExportPdf {
       printWindow.document.write(htmlContent);
       printWindow.document.close();
     } else {
+      // Fallback khi window.open bị chặn bởi iframe sandbox
       const iframe = document.createElement('iframe');
       iframe.style.position = 'fixed';
       iframe.style.right = '0';
@@ -469,13 +487,22 @@ export class ExportPdf {
         doc.open();
         doc.write(htmlContent);
         doc.close();
+
         setTimeout(() => {
           try {
-            if (document.body.contains(iframe)) {
-              document.body.removeChild(iframe);
-            }
-          } catch (e) {}
-        }, 5000);
+            iframe.contentWindow?.focus();
+            iframe.contentWindow?.print();
+          } catch (e) {
+            console.warn('Iframe print warning:', e);
+          }
+          setTimeout(() => {
+            try {
+              if (document.body.contains(iframe)) {
+                document.body.removeChild(iframe);
+              }
+            } catch {}
+          }, 4000);
+        }, 600);
       }
     }
   }
